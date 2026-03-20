@@ -7,7 +7,7 @@ from tkinter import messagebox, ttk
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .config import bump_mode_version, latest_modes_backup, restore_latest_modes_backup, save_modes, validate_mode, validate_modes_payload, load_modes
-from .models import ALLOWED_FIELD_TYPES, ALLOWED_RULE_ACTIONS, ALLOWED_RULE_OPERATORS, clone_mode
+from .models import ALLOWED_FIELD_TYPES, ALLOWED_RULE_ACTIONS, ALLOWED_RULE_OPERATORS, clone_mode, is_number_missing_marker
 
 
 def _copy_title(value: str, fallback: str) -> str:
@@ -30,6 +30,13 @@ def _unique_copy_key(base_value: str, existing_values: List[str], fallback: str)
     return candidate
 
 
+def _default_to_editor_text(field: Dict[str, Any]) -> str:
+    default = field.get("default")
+    if field.get("type") == "number" and default is None:
+        return "None"
+    return "" if default is None else str(default)
+
+
 class FieldEditorDialog(tk.Toplevel):
     def __init__(self, master: tk.Misc, field: Optional[Dict[str, Any]], on_save: Callable[[Dict[str, Any]], None]) -> None:
         super().__init__(master)
@@ -45,7 +52,7 @@ class FieldEditorDialog(tk.Toplevel):
         self.label_var = tk.StringVar(value=field.get("label", ""))
         self.type_var = tk.StringVar(value=field.get("type", "text"))
         self.required_var = tk.BooleanVar(value=bool(field.get("required", False)))
-        self.default_var = tk.StringVar(value="" if field.get("default") is None else str(field.get("default", "")))
+        self.default_var = tk.StringVar(value=_default_to_editor_text(field))
 
         frame = ttk.Frame(self, padding=12)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -98,6 +105,8 @@ class FieldEditorDialog(tk.Toplevel):
             payload["default"] = default_value.lower() in {"1", "true", "yes", "да"}
         elif field_type == "multiselect":
             payload["default"] = [line.strip() for line in default_value.split(";") if line.strip()]
+        elif field_type == "number" and is_number_missing_marker(default_value):
+            payload["default"] = None
         else:
             payload["default"] = default_value
         if field_type in {"select", "multiselect"}:
@@ -330,7 +339,16 @@ class ModeEditorWindow(tk.Toplevel):
         ttk.Label(general_tab, text="Примеры\n(по одному на строку)").grid(row=6, column=0, sticky="nw")
         self.examples_text = tk.Text(general_tab, height=6, width=60)
         self.examples_text.grid(row=6, column=1, sticky="we", padx=(8, 0), pady=4)
-        ttk.Button(general_tab, text="Применить изменения вкладки", command=self.apply_general_changes).grid(row=7, column=1, sticky="e", pady=(8, 0))
+        change_log_frame = ttk.LabelFrame(general_tab, text="История изменений режима", padding=8)
+        change_log_frame.grid(row=7, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        self.change_log_listbox = tk.Listbox(change_log_frame, height=5, exportselection=False)
+        self.change_log_listbox.pack(fill=tk.BOTH, expand=True)
+        change_log_buttons = ttk.Frame(change_log_frame)
+        change_log_buttons.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(change_log_buttons, text="Добавить / обновить", command=self.add_or_update_change_log_entry).pack(side=tk.LEFT)
+        ttk.Button(change_log_buttons, text="Оставить выбранный", command=self.keep_only_selected_change_log).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(change_log_buttons, text="Удалить выбранный", command=self.delete_selected_change_log).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(general_tab, text="Применить изменения вкладки", command=self.apply_general_changes).grid(row=8, column=1, sticky="e", pady=(8, 0))
         general_tab.columnconfigure(1, weight=1)
 
         fields_toolbar = ttk.Frame(fields_tab)

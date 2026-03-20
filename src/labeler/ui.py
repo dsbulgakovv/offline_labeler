@@ -31,7 +31,7 @@ from .io_utils import (
     split_dialogue_text,
 )
 from .mode_editor import ModeEditorWindow
-from .models import ValidationIssue, empty_annotation
+from .models import ValidationIssue, empty_annotation, is_number_missing_marker
 from .rules import disabled_field_keys, is_annotation_complete, validate_annotation
 from .storage import (
     build_current_file_history,
@@ -247,6 +247,7 @@ class LabelerApp(tk.Tk):
         self.mode_combo = ttk.Combobox(top, values=[], state="readonly", width=44)
         self.mode_combo.grid(row=0, column=1, sticky="w")
         self.mode_combo.bind("<<ComboboxSelected>>", self.on_mode_changed)
+        self._bind_combobox_wheel_guard(self.mode_combo)
 
         ttk.Button(top, text="Конструктор режимов", command=self.open_mode_editor).grid(row=0, column=2, padx=(12, 0))
         ttk.Button(top, text="Восстановить backup", command=self.restore_modes_backup).grid(row=0, column=3, padx=(8, 0))
@@ -261,6 +262,7 @@ class LabelerApp(tk.Tk):
         ttk.Label(top, text="Файл из input:", style="Header.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(10, 0))
         self.file_combo = ttk.Combobox(top, values=[], state="readonly", width=78)
         self.file_combo.grid(row=2, column=1, columnspan=4, sticky="we", pady=(10, 0))
+        self._bind_combobox_wheel_guard(self.file_combo)
         ttk.Button(top, text="Обновить список", command=self.refresh_files).grid(row=2, column=5, padx=(12, 0), pady=(10, 0))
         ttk.Button(top, text="Загрузить", command=self.load_selected_dataset, style="Accent.TButton").grid(row=2, column=6, padx=(8, 0), pady=(10, 0))
 
@@ -341,6 +343,8 @@ class LabelerApp(tk.Tk):
         self.bind_all("<Alt-Left>", self._hotkey_prev, add="+")
         self.bind_all("<Alt-Right>", self._hotkey_next, add="+")
         self.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+        self.bind_all("<Button-4>", self._on_mousewheel, add="+")
+        self.bind_all("<Button-5>", self._on_mousewheel, add="+")
 
     def _event_in_main_context(self, event: Optional[Any] = None) -> bool:
         modal = self.grab_current()
@@ -399,11 +403,29 @@ class LabelerApp(tk.Tk):
             return None
         if not (widget is self.form_canvas or self._widget_is_descendant_of(widget, self.form_inner)):
             return None
+        units = 0
         delta = getattr(event, "delta", 0)
-        if not delta:
+        if delta:
+            units = int(-1 * (delta / 120))
+        else:
+            button_num = getattr(event, "num", None)
+            if button_num == 4:
+                units = -1
+            elif button_num == 5:
+                units = 1
+        if not units:
             return None
-        self.form_canvas.yview_scroll(int(-1 * (delta / 120)), "units")
+        self.form_canvas.yview_scroll(units, "units")
         return "break"
+
+    def _guard_combobox_wheel(self, event: Any) -> str:
+        result = self._on_mousewheel(event)
+        return result or "break"
+
+    def _bind_combobox_wheel_guard(self, widget: ttk.Combobox) -> None:
+        widget.bind("<MouseWheel>", self._guard_combobox_wheel, add="+")
+        widget.bind("<Button-4>", self._guard_combobox_wheel, add="+")
+        widget.bind("<Button-5>", self._guard_combobox_wheel, add="+")
 
     def _attach_global_edit_support(self) -> None:
         self.bind_all("<Control-KeyPress>", self._edit_control_keypress, add="+")
@@ -800,6 +822,7 @@ class LabelerApp(tk.Tk):
         confidence_var = tk.StringVar(value="")
         confidence_widget = ttk.Combobox(meta_frame, textvariable=confidence_var, values=["", "Высокая", "Средняя", "Низкая"], state="readonly", width=20)
         confidence_widget.grid(row=0, column=1, sticky="w", padx=(8, 0), pady=4)
+        self._bind_combobox_wheel_guard(confidence_widget)
         confidence_var.trace_add("write", lambda *_: self.mark_dirty())
 
         needs_review_var = tk.BooleanVar(value=False)
@@ -834,6 +857,7 @@ class LabelerApp(tk.Tk):
             row.pack(fill=tk.X, pady=(4, 0))
             widget = ttk.Combobox(row, textvariable=var)
             widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self._bind_combobox_wheel_guard(widget)
             self._attach_entry_history(widget)
             widget.bind("<KeyRelease>", lambda e, key=field["key"]: self.refresh_text_suggestions(key))
             widget.bind("<FocusIn>", lambda e, key=field["key"]: self.refresh_text_suggestions(key))
@@ -853,6 +877,7 @@ class LabelerApp(tk.Tk):
             sugg_var = tk.StringVar(value="")
             sugg_widget = ttk.Combobox(suggestion_row, textvariable=sugg_var)
             sugg_widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self._bind_combobox_wheel_guard(sugg_widget)
             self._attach_entry_history(sugg_widget)
             sugg_widget.bind("<KeyRelease>", lambda e, key=field["key"]: self.refresh_text_suggestions(key, for_textarea=True))
             sugg_widget.bind("<FocusIn>", lambda e, key=field["key"]: self.refresh_text_suggestions(key, for_textarea=True))
@@ -876,6 +901,7 @@ class LabelerApp(tk.Tk):
             var = tk.StringVar(value="")
             widget = ttk.Combobox(frame, textvariable=var, values=field.get("options", []), state="readonly")
             widget.pack(fill=tk.X, pady=(4, 0))
+            self._bind_combobox_wheel_guard(widget)
             var.trace_add("write", lambda *_: self.mark_dirty())
             self.widget_bindings[field["key"]] = {"type": field_type, "var": var, "widget": widget, "field": field}
         elif field_type == "multiselect":
@@ -1067,8 +1093,12 @@ class LabelerApp(tk.Tk):
 
     def _set_binding_value(self, binding: Dict[str, Any], value: Any) -> None:
         field_type = binding["type"]
-        if field_type in {"text", "number", "select"}:
+        if field_type in {"text", "select"}:
             binding["var"].set("" if value is None else str(value))
+            self._reset_entry_history(binding["widget"])
+        elif field_type == "number":
+            normalized_value = None if value is None or is_number_missing_marker(value) else value
+            binding["var"].set("" if normalized_value is None else str(normalized_value))
             self._reset_entry_history(binding["widget"])
         elif field_type == "textarea":
             prev_state = str(binding["widget"].cget("state"))
@@ -1164,8 +1194,15 @@ class LabelerApp(tk.Tk):
         for field in self.current_mode().get("fields", []):
             binding = self.widget_bindings[field["key"]]
             field_type = binding["type"]
-            if field_type in {"text", "number", "select"}:
+            if field_type in {"text", "select"}:
                 values[field["key"]] = binding["var"].get().strip()
+            elif field_type == "number":
+                raw_value = binding["var"].get().strip()
+                default_value = binding.get("field", {}).get("default", "")
+                if raw_value == "" and (default_value is None or is_number_missing_marker(default_value)):
+                    values[field["key"]] = None
+                else:
+                    values[field["key"]] = raw_value
             elif field_type == "textarea":
                 values[field["key"]] = binding["widget"].get("1.0", tk.END).strip()
             elif field_type == "checkbox":

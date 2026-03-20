@@ -29,6 +29,8 @@ ALLOWED_RULE_ACTIONS = {
     'require_value_in',
 }
 
+NUMBER_MISSING_MARKERS = {'none', 'null', 'nan'}
+
 
 @dataclass
 class ValidationIssue:
@@ -42,9 +44,15 @@ def clone_mode(mode):
     return deepcopy(mode)
 
 
+def is_number_missing_marker(value):
+    return isinstance(value, str) and value.strip().lower() in NUMBER_MISSING_MARKERS
+
+
 def _field_default(field):
     if 'default' in field:
         default = field.get('default')
+        if field.get('type') == 'number' and (default is None or is_number_missing_marker(default)):
+            return None
         if isinstance(default, list):
             return list(default)
         return default
